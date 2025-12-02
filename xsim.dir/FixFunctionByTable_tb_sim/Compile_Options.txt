@@ -1,0 +1,1 @@
+-nolog "FixFunctionByTable_tb" -s "FixFunctionByTable_tb_sim" 

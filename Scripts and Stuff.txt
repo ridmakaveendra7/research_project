@@ -1,0 +1,605 @@
+
+# # # 
+# # # STEP 1 Create the vhdl file
+# # # 
+
+ilpTimeout=300 compression=optimal_minStages tiling=optimalTilingAndCompression target=VirtexUltrascalePlus useTargetOpt=1 frequency=1
+
+
+# # # 
+# # # STEP 2 Syth. and Imp. 
+# # # 
+
+# # # Starting Vivado in batch more from python
+subprocess.call([vivado_executable, "-mode", "batch",  "-nolog", "-nojournal", "-source", full_path_main_tcl, "-tclargs", *script_args]) 
+
+
+# # # Setting up a Vivado project (There is also a way where you maybe do not have to setup a vivado project and do the synth&impl. directly
+
+# Define project name and path
+set proj_name "{{ project_name }}"
+set proj_dir [file dirname [file normalize [info script]]]
+# set proj_dir "{{ project_folder }}"
+set proj_file "$proj_dir/$proj_name"
+set part_name "{{ part_name }}"
+
+puts "Opening existing or creating project: $proj_file"
+
+# Check if project file exists
+if { [file exists $proj_file] } {
+    puts "Opening existing project: $proj_file"
+    catch {
+        open_project $proj_file
+    } result
+    if { [string match "*ERROR*" $result] } {
+        puts "Failed to open project. Creating new project..."
+        create_project $proj_name $proj_dir -part $part_name
+    } else {
+        puts "Project opened successfully."
+    }
+} else {
+    puts "Project not found. Creating new project..."
+    file mkdir $proj_dir
+    create_project $proj_name $proj_dir -part $part_name
+}
+
+puts "Switching work directory to current project directory"
+cd [get_property DIRECTORY [current_project]]
+
+set_property default_lib work [current_project]
+set_property part $part_name [current_project] -quiet
+set_param general.maxThreads 16
+remove_files [get_files]
+
+read_xdc generic_constrains.xdc
+read_xdc clock_constrains.xdc
+# import_files -fileset sim_1 -flat -force scripts/synthesis_and_implement_script.txt
+# import_files -fileset sim_1 -flat -force scripts/get_util_report_script.txt
+import_files -fileset constrs_1 -flat -force generic_constrains.xdc
+import_files -fileset constrs_1 -flat -force clock_constrains.xdc
+
+import_files -force -flat vhdl/
+import_files -fileset sim_1 -flat -force vhdl_test_benches/
+set_property FILE_TYPE {VHDL 2008} [get_files *.vhd]
+set_property FILE_TYPE {VHDL 2008} [get_files *.vhdl]
+
+{% for file in all_vhdl_files_only_simulation %}
+set_property -verbose used_in_synthesis false [get_files {{ file }}]
+set_property -verbose used_in_simulation true [get_files {{ file }}]
+{% endfor %}
+
+{% for file in all_vhdl_files_only_synthesis %}
+set_property -verbose used_in_synthesis true   [get_files {{ file }}]
+set_property -verbose used_in_simulation false [get_files {{ file }}]
+{% endfor %}
+
+set_property top {{ top_entity_name }} [current_fileset]
+set_property top {{ top_sim_entity }} [get_fileset sim_1]
+update_compile_order -force_gui
+
+
+# # # TCL Script (jinja2 as renderer)
+
+# Define project name and path
+set proj_name "{{ project_name }}"
+set proj_dir [file dirname [file normalize [info script]]]
+# set proj_dir "{{ project_folder }}"
+set proj_file "$proj_dir/$proj_name"
+set part_name "{{ part_name }}"
+
+# Check if any project is open
+set open_proj [get_projects]
+
+if {[llength $open_proj] == 0} {
+    puts "No project is open. Opening project..."
+    open_project $proj_file
+}
+
+update_compile_order -fileset sources_1
+reset_run synth_1
+launch_runs synth_1 -jobs 16
+synth_design -part "$part_name" -top {{top_entity_name}} -flatten_hierarchy rebuilt -bufg 12
+wait_on_runs synth_1
+puts "Done synth"
+
+open_run synth_1
+opt_design
+puts "Done opt_design"
+
+reset_run impl_1 -quiet
+launch_runs impl_1 -jobs 16
+wait_on_runs impl_1
+puts "Implementation done"
+
+open_run impl_1
+puts "Opened implementation"
+report_utilization -hierarchical -file "$proj_dir/util_report_hira.txt" -hierarchical_depth 2 -quiet
+puts "Done util report"
+
+
+
+# # # 
+# # # Reading out the Util results (We only want to know LUTs, but you should write down everything)
+# # # 
+
+# # # Read out vivado util report
+
+from __future__ import annotations
+import re
+from dataclasses import dataclass, field
+from typing import Optional, List, Dict
+uid_counter = 0
+
+@dataclass
+class UtilReportEntry:
+    Instance: Optional[str] = None
+    Module: Optional[str] = None
+    LUTs: Optional[int] = 0
+    SRLs: Optional[int] = 0
+    FFs: Optional[int] = 0
+    BRAMs: Optional[float] = 0
+    URAMs: Optional[int] = 0
+    DSPs: Optional[int] = 0
+    Parent: Optional["UtilReportEntry"] = None
+    Children: List["UtilReportEntry"] = field(default_factory=list)
+    Depth: Optional[int] = None
+    UId: Optional[int] = None
+
+    def get_string(self):
+        return f"{self.Instance} -> LUTs: {self.LUTs} FFs: {self.FFs} DSPs: {self.DSPs} BRAMs: {self.BRAMs} "
+
+    def as_subtracted(self, other:UtilReportEntry):
+        if other is None:
+            return self
+        return UtilReportEntry(self.Instance,
+                               self.Module,
+                               self.LUTs - other.LUTs,
+                               self.SRLs - other.SRLs,
+                               self.FFs - other.FFs,
+                               self.BRAMs - other.BRAMs,
+                               self.URAMs - other.URAMs,
+                               self.DSPs - other.DSPs,
+                               self.Parent,
+                               self.Children,
+                               self.Depth,
+                               -(self.UId + other.UId))
+
+class UtilReport:
+    def __init__(self, all_entries:List[UtilReportEntry]):
+        self.all_entries = all_entries
+
+    def get_top(self):
+        return self.all_entries[0]
+
+    def get_by_instance_name(self, instance_name, depth=None):
+        for entry in self.all_entries:
+            if entry.Instance == instance_name and (depth is None or depth == entry.Depth):
+                return entry
+        all_names = [entry.Instance for entry in self.all_entries]
+        raise Exception(f"Cannot find util entry with instance name \"{instance_name}\". Here are all instance names: {all_names}")
+
+    def get_by_instance_name_or_None(self, instance_name, depth=None):
+        try:
+            return self.get_by_instance_name(instance_name, depth)
+        except:
+            return None
+
+def read_vivado_util_report(model_util_report_path) -> UtilReport:
+    global uid_counter
+
+    def parse_table_row(line: str):
+        splitted = line.split("|")
+        splitted = [x.strip() for x in splitted]
+        splitted = [x for x in splitted if x != ""]
+        return splitted
+
+    def parse_table_row_depth(line: str):
+        splitted = line.split("|")
+        instance = splitted[1]
+        whitespace_at_front = re.sub(r"^(\s*)(.*)$", r"\1", instance)
+        number_of_spaces = len(whitespace_at_front)
+        depth = (number_of_spaces - 1) // 2 # Each depth-level has two spaces! (Hopefully always ...)
+        return depth
+
+    with open(model_util_report_path, "r") as f:
+        all_lines = f.readlines()
+        cur_line_index = -1
+        for i, line in enumerate(all_lines):
+            if "Total LUTs" in line:
+                cur_line_index = i
+                break
+
+    # Read the head of the table
+    splitted_names = parse_table_row(all_lines[cur_line_index])
+    cur_line_index += 2  # Skip the names and the next row that is just a "split" row consisting of +------+--------+-----+
+
+    def parse_util_entry(line: str):
+        util_map = UtilReportEntry()
+        splitted_values = parse_table_row(line)
+        util_map_str = {x: y for x, y in zip(splitted_names, splitted_values)}
+        util_map.Instance = util_map_str["Instance"]
+        util_map.Module = util_map_str["Module"]
+        if "Total LUTs" in util_map_str:
+            util_map.LUTs = int(util_map_str["Total LUTs"])
+        if "SRLs" in util_map_str:
+            util_map.SRLs = int(util_map_str["SRLs"])
+        if "FFs" in util_map_str:
+            util_map.FFs = int(util_map_str["FFs"])
+
+        if "RAMB36" in util_map_str:
+            util_map.BRAMs = float(util_map_str["RAMB36"])
+        if "RAMB18" in util_map_str:
+            util_map.BRAMs += float(util_map_str["RAMB18"]) * 0.5
+
+        if "URAM" in util_map_str:
+            util_map.URAMs = int(util_map_str["URAM"])
+        if "DSP Blocks" in util_map_str:
+            util_map.DSPs = int(util_map_str["DSP Blocks"])
+        return util_map
+
+    all_entries = []
+    # cur_line_index += 2
+    for line_idx in range(cur_line_index,len(all_lines),1):
+        cur_line = all_lines[line_idx]
+        if "-+-" in cur_line:
+            break
+        # print("line_idx", line_idx, cur_line)
+        # Parse current line
+        depth = parse_table_row_depth(cur_line)
+        report = parse_util_entry(cur_line)
+        report.Depth = depth
+        report.UId = uid_counter
+        uid_counter += 1
+        all_entries.append(report)
+    return UtilReport(all_entries)
+	
+	
+	
+	
+	
+# # #
+# # # STEP 4 Run the simulation and write down all inputs and outputs (So a csv with 2 columns (input, output))
+# # # 
+
+
+library ieee;
+use ieee.std_logic_1164.all;
+use ieee.numeric_std.all;
+use std.textio.all;
+use ieee.std_logic_arith.CONV_STD_LOGIC_VECTOR;
+use IEEE.STD_LOGIC_TEXTIO.ALL;
+use std.env.finish;
+
+LIBRARY work;
+USE work.ALL;
+USE work.Components.ALL;
+
+library work;
+use work.simulation_settings.all;
+
+entity JSCNetmodel_sim is
+    GENERIC
+    (
+        XI_WIDTH        	          : natural := 9
+    );
+end JSCNetmodel_sim;
+
+architecture Behavioral of JSCNetmodel_sim is
+    -- Constants declaration
+    constant CLK_PERIOD : time := 10 ns;
+
+    -- Clock and reset signal
+    signal clk_tb : std_logic := '0';
+    signal reset_tb : std_logic := '0';
+
+    -- model input data signals
+
+    signal model_xi_1_tb : std_logic_vector((9-1) downto 0);
+    signal model_xi_1_tb_sync : std_logic_vector((9-1) downto 0);
+    signal model_xi_2_tb : std_logic_vector((9-1) downto 0);
+    signal model_xi_2_tb_sync : std_logic_vector((9-1) downto 0);
+    signal model_xi_3_tb : std_logic_vector((9-1) downto 0);
+    signal model_xi_3_tb_sync : std_logic_vector((9-1) downto 0);
+    signal model_xi_4_tb : std_logic_vector((9-1) downto 0);
+    signal model_xi_4_tb_sync : std_logic_vector((9-1) downto 0);
+    signal model_xi_5_tb : std_logic_vector((9-1) downto 0);
+    signal model_xi_5_tb_sync : std_logic_vector((9-1) downto 0);
+    signal model_xi_6_tb : std_logic_vector((9-1) downto 0);
+    signal model_xi_6_tb_sync : std_logic_vector((9-1) downto 0);
+    signal model_xi_7_tb : std_logic_vector((9-1) downto 0);
+    signal model_xi_7_tb_sync : std_logic_vector((9-1) downto 0);
+    signal model_xi_8_tb : std_logic_vector((9-1) downto 0);
+    signal model_xi_8_tb_sync : std_logic_vector((9-1) downto 0);
+    signal model_xi_9_tb : std_logic_vector((9-1) downto 0);
+    signal model_xi_9_tb_sync : std_logic_vector((9-1) downto 0);
+    signal model_xi_10_tb : std_logic_vector((9-1) downto 0);
+    signal model_xi_10_tb_sync : std_logic_vector((9-1) downto 0);
+    signal model_xi_11_tb : std_logic_vector((9-1) downto 0);
+    signal model_xi_11_tb_sync : std_logic_vector((9-1) downto 0);
+    signal model_xi_12_tb : std_logic_vector((9-1) downto 0);
+    signal model_xi_12_tb_sync : std_logic_vector((9-1) downto 0);
+    signal model_xi_13_tb : std_logic_vector((9-1) downto 0);
+    signal model_xi_13_tb_sync : std_logic_vector((9-1) downto 0);
+    signal model_xi_14_tb : std_logic_vector((9-1) downto 0);
+    signal model_xi_14_tb_sync : std_logic_vector((9-1) downto 0);
+    signal model_xi_15_tb : std_logic_vector((9-1) downto 0);
+    signal model_xi_15_tb_sync : std_logic_vector((9-1) downto 0);
+    signal model_xi_16_tb : std_logic_vector((9-1) downto 0);
+    signal model_xi_16_tb_sync : std_logic_vector((9-1) downto 0);
+
+    -- Control signals
+    signal model_y_valid_tb : std_logic;
+    signal model_x_is_valid_tb : std_logic;
+    signal model_x_is_valid_tb_sync : std_logic;
+    --signal input_hold_counter_tb    : std_logic_vector(bits(CLOCK_CYCLES_PER_STEP-1)-1 downto 0);
+
+    -- model output data signals
+
+
+    signal model_yo_1_tb : std_logic_vector((13-1) downto 0);
+    signal model_yo_2_tb : std_logic_vector((13-1) downto 0);
+    signal model_yo_3_tb : std_logic_vector((13-1) downto 0);
+    signal model_yo_4_tb : std_logic_vector((13-1) downto 0);
+    signal model_yo_5_tb : std_logic_vector((13-1) downto 0);
+
+begin
+    -- Component instantiation
+    dut : entity work.JSCNetmodel_for_simulation
+        port map (
+            clk =>   clk_tb,
+            reset => reset_tb,
+            --xi => xi_tb,
+        
+            model_xi_1 => model_xi_1_tb_sync,
+            model_xi_2 => model_xi_2_tb_sync,
+            model_xi_3 => model_xi_3_tb_sync,
+            model_xi_4 => model_xi_4_tb_sync,
+            model_xi_5 => model_xi_5_tb_sync,
+            model_xi_6 => model_xi_6_tb_sync,
+            model_xi_7 => model_xi_7_tb_sync,
+            model_xi_8 => model_xi_8_tb_sync,
+            model_xi_9 => model_xi_9_tb_sync,
+            model_xi_10 => model_xi_10_tb_sync,
+            model_xi_11 => model_xi_11_tb_sync,
+            model_xi_12 => model_xi_12_tb_sync,
+            model_xi_13 => model_xi_13_tb_sync,
+            model_xi_14 => model_xi_14_tb_sync,
+            model_xi_15 => model_xi_15_tb_sync,
+            model_xi_16 => model_xi_16_tb_sync,
+            --input_hold_counter   => input_hold_counter_tb,
+            model_x_is_valid   => model_x_is_valid_tb_sync,
+
+            model_y_valid      => model_y_valid_tb,
+        
+            model_yo_1 => model_yo_1_tb , 
+            model_yo_2 => model_yo_2_tb , 
+            model_yo_3 => model_yo_3_tb , 
+            model_yo_4 => model_yo_4_tb , 
+            model_yo_5 => model_yo_5_tb 
+        );
+
+    -- Clock process
+    clk_process: process
+    begin
+        clk_tb <= '0';
+        wait for CLK_PERIOD / 2;
+        clk_tb <= '1';
+        wait for CLK_PERIOD / 2;
+    end process;
+
+    -- sync input data
+    sync_inputs: process(clk_tb)
+    begin
+        if rising_edge(clk_tb) then
+        
+            model_xi_1_tb_sync <= model_xi_1_tb;
+            model_xi_2_tb_sync <= model_xi_2_tb;
+            model_xi_3_tb_sync <= model_xi_3_tb;
+            model_xi_4_tb_sync <= model_xi_4_tb;
+            model_xi_5_tb_sync <= model_xi_5_tb;
+            model_xi_6_tb_sync <= model_xi_6_tb;
+            model_xi_7_tb_sync <= model_xi_7_tb;
+            model_xi_8_tb_sync <= model_xi_8_tb;
+            model_xi_9_tb_sync <= model_xi_9_tb;
+            model_xi_10_tb_sync <= model_xi_10_tb;
+            model_xi_11_tb_sync <= model_xi_11_tb;
+            model_xi_12_tb_sync <= model_xi_12_tb;
+            model_xi_13_tb_sync <= model_xi_13_tb;
+            model_xi_14_tb_sync <= model_xi_14_tb;
+            model_xi_15_tb_sync <= model_xi_15_tb;
+            model_xi_16_tb_sync <= model_xi_16_tb;
+            model_x_is_valid_tb_sync <= model_x_is_valid_tb;
+        
+        end if;
+    end process;
+
+    -- Stimulus process
+    stimulus_process: process
+        file input_file      : text open read_mode is PROJ_SIMULATION_ROOT_PATH &  "JSCNetmodel_sim_inputs.csv";
+        
+        file output_num_file : text open write_mode is PROJ_SIMULATION_ROOT_PATH &  "JSCNetmodel_sim_outputs.csv";
+        file output_latency_file : text open write_mode is PROJ_SIMULATION_ROOT_PATH &  "../latency_data/output_latency.csv";
+        file valid_only_output_num_file : text open write_mode is PROJ_SIMULATION_ROOT_PATH &  "JSCNetmodel_sim_only_valid_outputs.csv";
+        variable line_buf    : line;
+        variable input_x     : integer;
+        variable input_valid : std_logic;
+        variable line_out    : line;
+        variable line_count : integer := 0;
+        variable total_lines : integer := 0;
+
+        variable found_first_valid_input : integer := 0;
+        variable found_first_valid_output : integer := 0;
+        variable first_valid_output_latency : integer := 0;
+        variable last_valid_output_latency : integer := 0;
+        variable latency_counter : integer := 0;
+    begin
+        -- Count total lines in file
+        while not endfile(input_file) loop
+            readline(input_file, line_buf);
+            total_lines := total_lines + 1;
+        end loop;
+        file_close(input_file);
+        file_open(input_file, PROJ_SIMULATION_ROOT_PATH &  "JSCNetmodel_sim_inputs.csv", read_mode);
+
+        wait for CLK_PERIOD / 2;
+
+        -- Reset everything and set an initial input for a proper reset
+    
+        model_xi_1_tb <= (others => '0');
+        model_xi_2_tb <= (others => '0');
+        model_xi_3_tb <= (others => '0');
+        model_xi_4_tb <= (others => '0');
+        model_xi_5_tb <= (others => '0');
+        model_xi_6_tb <= (others => '0');
+        model_xi_7_tb <= (others => '0');
+        model_xi_8_tb <= (others => '0');
+        model_xi_9_tb <= (others => '0');
+        model_xi_10_tb <= (others => '0');
+        model_xi_11_tb <= (others => '0');
+        model_xi_12_tb <= (others => '0');
+        model_xi_13_tb <= (others => '0');
+        model_xi_14_tb <= (others => '0');
+        model_xi_15_tb <= (others => '0');
+        model_xi_16_tb <= (others => '0');
+
+        -- Start the reset and let it run for a few clock cycles
+        model_x_is_valid_tb <= '0';
+        reset_tb <= '1';  -- Assert reset
+        wait for 150 * CLK_PERIOD;
+        reset_tb <= '0';  -- De-assert reset
+        wait for CLK_PERIOD;
+
+        -- Input one row after the other in the input_file. One row per clock cycle
+        while not endfile(input_file) loop
+            readline(input_file, line_buf);
+
+            -- Read and set x_is_valid
+            read(line_buf, input_valid);
+            model_x_is_valid_tb <= input_valid;
+
+            -- Read and set model input features
+        
+            read(line_buf, input_x);
+            model_xi_1_tb <= conv_std_logic_vector(input_x, model_xi_1_tb'length);
+            read(line_buf, input_x);
+            model_xi_2_tb <= conv_std_logic_vector(input_x, model_xi_2_tb'length);
+            read(line_buf, input_x);
+            model_xi_3_tb <= conv_std_logic_vector(input_x, model_xi_3_tb'length);
+            read(line_buf, input_x);
+            model_xi_4_tb <= conv_std_logic_vector(input_x, model_xi_4_tb'length);
+            read(line_buf, input_x);
+            model_xi_5_tb <= conv_std_logic_vector(input_x, model_xi_5_tb'length);
+            read(line_buf, input_x);
+            model_xi_6_tb <= conv_std_logic_vector(input_x, model_xi_6_tb'length);
+            read(line_buf, input_x);
+            model_xi_7_tb <= conv_std_logic_vector(input_x, model_xi_7_tb'length);
+            read(line_buf, input_x);
+            model_xi_8_tb <= conv_std_logic_vector(input_x, model_xi_8_tb'length);
+            read(line_buf, input_x);
+            model_xi_9_tb <= conv_std_logic_vector(input_x, model_xi_9_tb'length);
+            read(line_buf, input_x);
+            model_xi_10_tb <= conv_std_logic_vector(input_x, model_xi_10_tb'length);
+            read(line_buf, input_x);
+            model_xi_11_tb <= conv_std_logic_vector(input_x, model_xi_11_tb'length);
+            read(line_buf, input_x);
+            model_xi_12_tb <= conv_std_logic_vector(input_x, model_xi_12_tb'length);
+            read(line_buf, input_x);
+            model_xi_13_tb <= conv_std_logic_vector(input_x, model_xi_13_tb'length);
+            read(line_buf, input_x);
+            model_xi_14_tb <= conv_std_logic_vector(input_x, model_xi_14_tb'length);
+            read(line_buf, input_x);
+            model_xi_15_tb <= conv_std_logic_vector(input_x, model_xi_15_tb'length);
+            read(line_buf, input_x);
+            model_xi_16_tb <= conv_std_logic_vector(input_x, model_xi_16_tb'length);
+
+            wait for clk_period;
+
+            -- Find out latency
+            if found_first_valid_input = 1 then
+                latency_counter := latency_counter + 1;
+            end if;
+
+            if input_valid = '1' then
+                found_first_valid_input := 1;
+            end if;
+
+            if model_y_valid_tb = '1' then
+                last_valid_output_latency := latency_counter;
+                if found_first_valid_output = 0 then
+                    found_first_valid_output := 1;
+                    first_valid_output_latency := latency_counter;
+                end if;
+            end if;
+
+            -- Write out progress into tcl console (stdout)
+            line_count := line_count + 1;
+            if (line_count mod 5000 = 0) then
+                report "INFO: " & integer'image(line_count) & "/" & integer'image(total_lines) severity note;
+            end if;
+
+            -- Write y_valid into csv
+            write(line_out, model_y_valid_tb);
+            write(line_out, string'(" "));
+
+            -- Write all model output features into csv
+            write(line_out, integer'image(to_integer(signed(model_yo_1_tb))));
+            write(line_out, string'(" "));
+            write(line_out, integer'image(to_integer(signed(model_yo_2_tb))));
+            write(line_out, string'(" "));
+            write(line_out, integer'image(to_integer(signed(model_yo_3_tb))));
+            write(line_out, string'(" "));
+            write(line_out, integer'image(to_integer(signed(model_yo_4_tb))));
+            write(line_out, string'(" "));
+            write(line_out, integer'image(to_integer(signed(model_yo_5_tb))));
+            write(line_out, string'(" "));
+            writeline(output_num_file, line_out);
+
+            -- Write ONLY valid model output features into csv
+            if model_y_valid_tb = '1' then
+            
+                write(line_out, integer'image(to_integer(signed(model_yo_1_tb))));
+                write(line_out, string'(" "));
+                write(line_out, integer'image(to_integer(signed(model_yo_2_tb))));
+                write(line_out, string'(" "));
+                write(line_out, integer'image(to_integer(signed(model_yo_3_tb))));
+                write(line_out, string'(" "));
+                write(line_out, integer'image(to_integer(signed(model_yo_4_tb))));
+                write(line_out, string'(" "));
+                write(line_out, integer'image(to_integer(signed(model_yo_5_tb))));
+                write(line_out, string'(" "));
+                writeline(valid_only_output_num_file, line_out);
+            end if;
+        end loop;
+
+        -- Write out the measured output latency for the first and last valid output
+        write(line_out, integer'image(first_valid_output_latency));
+        write(line_out, string'(" "));
+        write(line_out, integer'image(last_valid_output_latency));
+        write(line_out, string'(" "));
+        writeline(output_latency_file, line_out);
+        finish;
+    end process;
+
+end Behavioral;
+
+
+
+# # # 
+# # # STEP 5 Calculating the error for each input output pair.
+# # # 
+
+...
+
+# # # 
+# # # STEP 6 Summarize the results. [The function, epsilon, Resources (LUTS, ...), All inputs and outputs]
+# # #
+
+
+
+
+
+
+
+
+
+
