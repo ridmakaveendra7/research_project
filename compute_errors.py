@@ -74,17 +74,21 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
 
+    # Determine decimal precision based on lsbOut
+    # If lsbOut < -10 (more negative), use 12 decimal places; otherwise use 8
+    decimal_precision = 12 if args.lsb_out < -10 else 8
+
     errors = compute_error(args.csv, args.lsb_in, args.msb_out, args.lsb_out, args.function)
 
     print("INPUT | FIXED INPUT | OUTPUT | FIXED OUTPUT | EXPECTED | ABS ERROR")
     print("----------------------------------------------------------------------")
     for e in errors:
-        print(f"{e['input']:5d} | {e['x_real']:11.5f} | {e['output']:6d} | {e['y_real']:12.5f} | "
-              f"{e['expected']:10.5f} | {e['abs_error']:10.5f}")
+        print(f"{e['input']:5d} | {e['x_real']:11.{decimal_precision}f} | {e['output']:6d} | {e['y_real']:12.{decimal_precision}f} | "
+              f"{e['expected']:10.{decimal_precision}f} | {e['abs_error']:10.{decimal_precision}f}")
     total_error = 0
     for e in errors:
         total_error += e['abs_error']
-    print(f"Average error: {total_error / len(errors)}")
+    print(f"Average error: {total_error / len(errors):.{decimal_precision}f}")
     print(f"\nFunction: {args.function}")
     print(f"LSB In: {args.lsb_in}")
     print(f"LSB Out: {args.lsb_out}")

@@ -1,7 +1,7 @@
 Copyright 1986-2022 Xilinx, Inc. All Rights Reserved. Copyright 2022-2025 Advanced Micro Devices, Inc. All Rights Reserved.
 --------------------------------------------------------------------------------------------------------------------------------------------------------------
 | Tool Version : Vivado v.2025.1.1 (win64) Build 6233196 Thu Sep 11 21:27:30 MDT 2025
-| Date         : Tue Dec  2 11:57:28 2025
+| Date         : Tue Dec  2 13:06:28 2025
 | Host         : Ridma running 64-bit major release  (build 9200)
 | Command      : report_utilization -file D:/GSD/Semester_3/Research_Project/py_scripts/build/reports/util_post_route.rpt -hierarchical -hierarchical_depth 2
 | Design       : FixFunctionByTable_Freq1_uid2
@@ -22,7 +22,7 @@ Table of Contents
 +-------------------------------+--------+------------+------------+---------+------+-----+--------+--------+------------+
 |            Instance           | Module | Total LUTs | Logic LUTs | LUTRAMs | SRLs | FFs | RAMB36 | RAMB18 | DSP Blocks |
 +-------------------------------+--------+------------+------------+---------+------+-----+--------+--------+------------+
-| FixFunctionByTable_Freq1_uid2 |  (top) |          3 |          3 |       0 |    0 |   0 |      0 |      0 |          0 |
+| FixFunctionByTable_Freq1_uid2 |  (top) |          4 |          4 |       0 |    0 |   0 |      0 |      0 |          0 |
 +-------------------------------+--------+------------+------------+---------+------+-----+--------+--------+------------+
 * Note: The sum of lower-level cells may be larger than their parent cells total, due to cross-hierarchy LUT combining
 

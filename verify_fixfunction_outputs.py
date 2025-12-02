@@ -13,7 +13,7 @@ import math
 from pathlib import Path
 
 LSB_IN = -3
-LSB_OUT = -3
+LSB_OUT = -6
 INPUT_SCALE = 2 ** abs(LSB_IN)
 OUTPUT_SCALE = 2 ** abs(LSB_OUT)
 

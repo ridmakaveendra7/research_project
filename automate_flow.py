@@ -14,7 +14,6 @@ import shlex
 import re
 import shutil
 import subprocess
-import os
 from pathlib import Path
 
 PY_SCRIPTS_ROOT = Path(__file__).resolve().parent
@@ -165,12 +164,6 @@ def main() -> None:
         default="ilpTimeout=300 compression=optimal_minStages "
         "tiling=optimalTilingAndCompression useTargetOpt=1",
     )
-    parser.add_argument(
-        "--vivado-settings",
-        type=Path,
-        default=None,
-        help="Path to Vivado settings script (settings64.sh/.bat).",
-    )
     args = parser.parse_args()
 
     flopoco_dir = args.flopoco_dir.resolve()
@@ -249,15 +242,25 @@ def main() -> None:
 
     tb_entity = "FixFunctionByTable_tb"
     snapshot = f"{tb_entity}_sim"
-    vivado_settings_path = (
-        Path(args.vivado_settings).resolve()
-        if args.vivado_settings
-        else (Path(os.environ["VIVADO_SETTINGS"]).resolve() if "VIVADO_SETTINGS" in os.environ else None)
-    )
+    # Hardcoded Vivado settings path
+    vivado_settings_path = Path(r"D:\Xilinx\2025.1.1\Vivado\settings64.bat").resolve()
+    if not vivado_settings_path.exists():
+        raise FileNotFoundError(
+            f"Vivado settings file not found at {vivado_settings_path}. "
+            "Please update the path in automate_flow.py"
+        )
 
     run_vivado_cmd("xvhdl -nolog hdl/flopoco.vhdl tb_FixFunctionByTable.vhdl", vivado_settings_path)
     run_vivado_cmd(f"xelab -nolog {tb_entity} -s {snapshot}", vivado_settings_path)
     run_vivado_cmd(f"xsim --nolog {snapshot} --runall", vivado_settings_path)
+    
+    # Clean up journal and project build files created by Vivado tools
+    for pattern in ["*.jou", "*.pb", "xsim*.jou", "xsim*.backup.jou", "xvhdl*.jou", "xelab*.jou"]:
+        for file_path in PY_SCRIPTS_ROOT.glob(pattern):
+            try:
+                file_path.unlink()
+            except OSError:
+                pass  # Ignore errors if file doesn't exist or can't be deleted
 
     verify_cmd = [
         "python",

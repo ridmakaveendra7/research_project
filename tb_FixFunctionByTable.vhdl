@@ -28,7 +28,7 @@ architecture sim of FixFunctionByTable_tb is
 
     signal clk_tb   : std_logic := '0';
     signal x_tb     : std_logic_vector(2 downto 0) := (others => '0');
-    signal y_tb     : std_logic_vector(5 downto 0);
+    signal y_tb     : std_logic_vector(11 downto 0);
     signal sample_valid : std_logic := '0';
 begin
     -- Clock generation (useful for aligning with other flows, even though DUT is combinational)
