@@ -10,14 +10,18 @@ Example:
 from __future__ import annotations
 
 import argparse
+import csv
+import importlib.util
 import shlex
 import re
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 PY_SCRIPTS_ROOT = Path(__file__).resolve().parent
 DEFAULT_FLOPOCO_DIR = PY_SCRIPTS_ROOT.parent / "flopoco"
+RESULTS_CSV = PY_SCRIPTS_ROOT / "results.csv"
 
 
 def run_cmd(cmd: list[str], cwd: Path | None = None) -> None:
@@ -149,6 +153,66 @@ def update_verifier(script_path: Path, lsb_in: int, lsb_out: int) -> None:
     print(f"Updated {script_path} with LSB_IN={lsb_in}, LSB_OUT={lsb_out}.")
 
 
+def extract_epsilon(function_str: str) -> float | None:
+    """Extract epsilon value from function string (e.g., 'log(x+0.0001)/log(2)' -> 0.0001)."""
+    # Look for patterns like x+0.0001, x+epsilon, etc.
+    epsilon_patterns = [
+        r"x\s*\+\s*([0-9]+\.?[0-9]*(?:[eE][+-]?[0-9]+)?)",  # x+0.0001
+        r"x\s*\+\s*([0-9]+\.[0-9]+)",  # x+0.0001 (more specific)
+    ]
+    for pattern in epsilon_patterns:
+        match = re.search(pattern, function_str)
+        if match:
+            try:
+                return float(match.group(1))
+            except ValueError:
+                continue
+    return None
+
+
+def log_results_to_csv(
+    function: str,
+    epsilon: float | None,
+    lsb_in: int,
+    lsb_out: int,
+    lut_count: int,
+    ff_count: int,
+    dsp_count: int,
+    bram_count: float,
+    avg_error: float,
+    io_pairs: list[tuple[int, int]],
+) -> None:
+    """Append results to results.csv file."""
+    # Format inputs/outputs as a string (e.g., "0:1,1:2,2:3")
+    io_str = ",".join(f"{inp}:{out}" for inp, out in io_pairs)
+    
+    # Prepare row data
+    row = {
+        "function": function,
+        "epsilon": epsilon if epsilon is not None else "",
+        "lsb_in": lsb_in,
+        "lsb_out": lsb_out,
+        "LUTs": lut_count,
+        "FFs": ff_count,
+        "DSPs": dsp_count,
+        "BRAMs": bram_count,
+        "avg_error": avg_error,
+        "inputs_outputs": io_str,
+    }
+    
+    # Check if file exists to determine if we need to write header
+    file_exists = RESULTS_CSV.exists()
+    
+    # Write to CSV
+    with RESULTS_CSV.open("a", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=row.keys())
+        if not file_exists:
+            writer.writeheader()
+        writer.writerow(row)
+    
+    print(f"\n==> Results logged to {RESULTS_CSV}")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Automate FloPoCo → Vivado flow.")
     parser.add_argument("--flopoco-dir", type=Path, default=DEFAULT_FLOPOCO_DIR)
@@ -238,7 +302,22 @@ def main() -> None:
     ]
     run_cmd(call_vivado_cmd)
 
-    run_cmd(["python", "read_util_report.py", "build/reports/util_post_route.rpt"])
+    # Read utilization report
+    util_report_path = PY_SCRIPTS_ROOT / "build" / "reports" / "util_post_route.rpt"
+    if not util_report_path.exists():
+        raise FileNotFoundError(f"Utilization report not found: {util_report_path}")
+    
+    # Show utilization report to user
+    run_cmd(["python", "read_util_report.py", str(util_report_path)])
+    
+    # Import read_util_report module to capture data programmatically
+    spec = importlib.util.spec_from_file_location("read_util_report", PY_SCRIPTS_ROOT / "read_util_report.py")
+    read_util_module = importlib.util.module_from_spec(spec)
+    sys.modules["read_util_report"] = read_util_module
+    spec.loader.exec_module(read_util_module)
+    
+    util_report = read_util_module.read_vivado_util_report(str(util_report_path))
+    top_entry = util_report.get_top()
 
     tb_entity = "FixFunctionByTable_tb"
     snapshot = f"{tb_entity}_sim"
@@ -275,6 +354,29 @@ def main() -> None:
     ]
     run_cmd(verify_cmd)
 
+    # Compute errors and get average error
+    sim_csv_path = PY_SCRIPTS_ROOT / "simulation" / "FixFunctionByTable_outputs.csv"
+    if not sim_csv_path.exists():
+        raise FileNotFoundError(f"Simulation CSV not found: {sim_csv_path}")
+    
+    # Import compute_errors module
+    spec = importlib.util.spec_from_file_location("compute_errors", PY_SCRIPTS_ROOT / "compute_errors.py")
+    compute_errors_module = importlib.util.module_from_spec(spec)
+    sys.modules["compute_errors"] = compute_errors_module
+    spec.loader.exec_module(compute_errors_module)
+    
+    error_results = compute_errors_module.compute_error(
+        str(sim_csv_path),
+        lsb_in,
+        msb_out,
+        lsb_out,
+        args.function,
+    )
+    
+    # Calculate average absolute error
+    avg_error = sum(abs(e["abs_error"]) for e in error_results) / len(error_results) if error_results else 0.0
+    
+    # Still run the command to show output to user
     compute_errors_cmd = [
         "python",
         "compute_errors.py",
@@ -290,6 +392,39 @@ def main() -> None:
         args.function,
     ]
     run_cmd(compute_errors_cmd)
+    
+    # Read all input/output pairs from simulation CSV
+    io_pairs = []
+    with sim_csv_path.open("r", encoding="utf-8") as f:
+        for line in f:
+            stripped = line.strip()
+            if not stripped:
+                continue
+            parts = stripped.split()
+            if len(parts) >= 2:
+                try:
+                    inp = int(parts[0])
+                    out = int(parts[1])
+                    io_pairs.append((inp, out))
+                except ValueError:
+                    continue
+    
+    # Extract epsilon from function
+    epsilon = extract_epsilon(args.function)
+    
+    # Log results to CSV
+    log_results_to_csv(
+        function=args.function,
+        epsilon=epsilon,
+        lsb_in=lsb_in,
+        lsb_out=lsb_out,
+        lut_count=top_entry.LUTs or 0,
+        ff_count=top_entry.FFs or 0,
+        dsp_count=top_entry.DSPs or 0,
+        bram_count=top_entry.BRAMs or 0.0,
+        avg_error=avg_error,
+        io_pairs=io_pairs,
+    )
 
 
 if __name__ == "__main__":
