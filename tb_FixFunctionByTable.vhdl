@@ -27,8 +27,8 @@ architecture sim of FixFunctionByTable_tb is
     constant OUTPUT_FILE_PATH : string := "simulation/FixFunctionByTable_outputs.csv";
 
     signal clk_tb   : std_logic := '0';
-    signal x_tb     : std_logic_vector(8 downto 0) := (others => '0');
-    signal y_tb     : std_logic_vector(5 downto 0);
+    signal x_tb     : std_logic_vector(2 downto 0) := (others => '0');
+    signal y_tb     : std_logic_vector(8 downto 0);
     signal sample_valid : std_logic := '0';
 begin
     -- Clock generation (useful for aligning with other flows, even though DUT is combinational)
@@ -52,11 +52,11 @@ begin
         file output_file : text open write_mode is OUTPUT_FILE_PATH;
         variable line_out : line;
     begin
-        report "Sweeping all 512 input vectors for FixFunctionByTable." severity note;
+        report "Sweeping all 8 input vectors for FixFunctionByTable." severity note;
 
         wait for 5 * CLK_PERIOD;
 
-        for in_value in 0 to 511 loop
+        for in_value in 0 to 7 loop
             x_tb <= std_logic_vector(to_unsigned(in_value, x_tb'length));
             sample_valid <= '1';
 

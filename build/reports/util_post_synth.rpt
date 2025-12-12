@@ -1,7 +1,7 @@
 Copyright 1986-2022 Xilinx, Inc. All Rights Reserved. Copyright 2022-2025 Advanced Micro Devices, Inc. All Rights Reserved.
 ---------------------------------------------------------------------------------------------------------------------------------------------
 | Tool Version : Vivado v.2025.1.1 (win64) Build 6233196 Thu Sep 11 21:27:30 MDT 2025
-| Date         : Thu Dec  4 10:52:27 2025
+| Date         : Fri Dec 12 13:38:44 2025
 | Host         : Ridma running 64-bit major release  (build 9200)
 | Command      : report_utilization -file D:/GSD/Semester_3/Research_Project/py_scripts/build/reports/util_post_synth.rpt
 | Design       : FixFunctionByTable_Freq1_uid2
@@ -31,13 +31,13 @@ Table of Contents
 +-------------------------+------+-------+------------+-----------+-------+
 |        Site Type        | Used | Fixed | Prohibited | Available | Util% |
 +-------------------------+------+-------+------------+-----------+-------+
-| Slice LUTs*             |   26 |     0 |          0 |     41000 |  0.06 |
-|   LUT as Logic          |   26 |     0 |          0 |     41000 |  0.06 |
+| Slice LUTs*             |    3 |     0 |          0 |     41000 | <0.01 |
+|   LUT as Logic          |    3 |     0 |          0 |     41000 | <0.01 |
 |   LUT as Memory         |    0 |     0 |          0 |     13400 |  0.00 |
 | Slice Registers         |    0 |     0 |          0 |     82000 |  0.00 |
 |   Register as Flip Flop |    0 |     0 |          0 |     82000 |  0.00 |
 |   Register as Latch     |    0 |     0 |          0 |     82000 |  0.00 |
-| F7 Muxes                |    4 |     0 |          0 |     20500 |  0.02 |
+| F7 Muxes                |    0 |     0 |          0 |     20500 |  0.00 |
 | F8 Muxes                |    0 |     0 |          0 |     10250 |  0.00 |
 +-------------------------+------+-------+------------+-----------+-------+
 * Warning! The Final LUT count, after physical optimizations and full implementation, is typically lower. Run opt_design after synthesis, if not already completed, for a more realistic count.
@@ -93,7 +93,7 @@ Warning! For any ECO changes, please run place_design if there are unplaced inst
 +-----------------------------+------+-------+------------+-----------+-------+
 |          Site Type          | Used | Fixed | Prohibited | Available | Util% |
 +-----------------------------+------+-------+------------+-----------+-------+
-| Bonded IOB                  |   15 |     0 |          0 |       285 |  5.26 |
+| Bonded IOB                  |   12 |     0 |          0 |       285 |  4.21 |
 | Bonded IPADs                |    0 |     0 |          0 |        14 |  0.00 |
 | Bonded OPADs                |    0 |     0 |          0 |         8 |  0.00 |
 | PHY_CONTROL                 |    0 |     0 |          0 |         6 |  0.00 |
@@ -154,13 +154,10 @@ Warning! For any ECO changes, please run place_design if there are unplaced inst
 +----------+------+---------------------+
 | Ref Name | Used | Functional Category |
 +----------+------+---------------------+
-| LUT6     |   15 |                 LUT |
-| IBUF     |    9 |                  IO |
-| LUT5     |    8 |                 LUT |
-| OBUF     |    6 |                  IO |
-| MUXF7    |    4 |               MuxFx |
-| LUT4     |    4 |                 LUT |
-| LUT3     |    2 |                 LUT |
+| OBUF     |    9 |                  IO |
+| LUT3     |    5 |                 LUT |
+| IBUF     |    3 |                  IO |
+| LUT2     |    1 |                 LUT |
 +----------+------+---------------------+
 
 

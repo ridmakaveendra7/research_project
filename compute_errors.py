@@ -87,7 +87,7 @@ if __name__ == "__main__":
               f"{e['expected']:10.{decimal_precision}f} | {e['abs_error']:10.{decimal_precision}f}")
     total_error = 0
     for e in errors:
-        total_error += e['abs_error']
+        total_error += abs(e['abs_error'])  # Use absolute value for average error calculation
     print(f"Average error: {total_error / len(errors):.{decimal_precision}f}")
     print(f"\nFunction: {args.function}")
     print(f"LSB In: {args.lsb_in}")

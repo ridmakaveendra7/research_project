@@ -41,6 +41,11 @@ def load_results(csv_path: Path) -> list[dict]:
             row["epsilon"] = float(row["epsilon"]) if row["epsilon"] else None
             row["lsb_in"] = int(row["lsb_in"])
             row["lsb_out"] = int(row["lsb_out"])
+            # msb_out might not be in old CSV files, so handle it gracefully
+            if "msb_out" in row and row["msb_out"]:
+                row["msb_out"] = int(row["msb_out"])
+            else:
+                row["msb_out"] = None
             row["LUTs"] = int(row["LUTs"])
             row["FFs"] = int(row["FFs"])
             row["DSPs"] = int(row["DSPs"])
@@ -50,17 +55,32 @@ def load_results(csv_path: Path) -> list[dict]:
     return results
 
 
-def create_plots(results: list[dict], output_dir: Path) -> None:
-    """Create all visualization plots."""
+def create_plots(results: list[dict], output_dir: Path, filter_epsilon: float | None = None) -> None:
+    """Create all visualization plots.
+    
+    Args:
+        results: List of result dictionaries
+        output_dir: Directory to save plots
+        filter_epsilon: If provided, filter results to only this epsilon value
+    """
     output_dir.mkdir(parents=True, exist_ok=True)
     
     if not results:
         print("No results to plot!")
         return
     
+    # Filter by epsilon if specified
+    if filter_epsilon is not None:
+        results = [r for r in results if r["epsilon"] is not None and abs(r["epsilon"] - filter_epsilon) < 1e-10]
+        if not results:
+            print(f"No results found for epsilon={filter_epsilon}")
+            return
+        print(f"Filtered to {len(results)} result(s) with epsilon={filter_epsilon}")
+    
     # Extract data arrays
     lsb_ins = [r["lsb_in"] for r in results]
     lsb_outs = [r["lsb_out"] for r in results]
+    msb_outs = [r["msb_out"] for r in results if r["msb_out"] is not None]
     luts = [r["LUTs"] for r in results]
     ffs = [r["FFs"] for r in results]
     dsps = [r["DSPs"] for r in results]
@@ -160,6 +180,135 @@ def create_plots(results: list[dict], output_dir: Path) -> None:
     print(f"Saved: {output_dir / 'resource_error_summary.png'}")
     plt.close()
     
+    # 4. MSB Out vs LSB Out with error visualization
+    # Filter results that have msb_out data
+    results_with_msb = [r for r in results if r["msb_out"] is not None]
+    if results_with_msb:
+        fig, ax = plt.subplots(figsize=(8, 6))
+        
+        msb_outs_plot = [r["msb_out"] for r in results_with_msb]
+        lsb_outs_plot = [r["lsb_out"] for r in results_with_msb]
+        errors_plot = [r["avg_error"] for r in results_with_msb]
+        
+        # MSB Out vs LSB Out, colored by error
+        scatter = ax.scatter(lsb_outs_plot, msb_outs_plot, s=200, alpha=0.7, 
+                            c=errors_plot, cmap="viridis", edgecolors="black", linewidth=1.5)
+        ax.set_xlabel("LSB Out")
+        ax.set_ylabel("MSB Out")
+        ax.set_title("MSB Out vs LSB Out (colored by Average Error)")
+        ax.grid(True, alpha=0.3)
+        cbar = plt.colorbar(scatter, ax=ax)
+        cbar.set_label("Average Error")
+        
+        # Add annotations with configuration info
+        for i, r in enumerate(results_with_msb):
+            ax.annotate(f"({r['lsb_in']},{r['lsb_out']})", 
+                       (lsb_outs_plot[i], msb_outs_plot[i]), 
+                       fontsize=7, alpha=0.6, ha="center")
+        
+        plt.tight_layout()
+        plt.savefig(output_dir / "msb_out_vs_lsb_out.png", dpi=300, bbox_inches="tight")
+        print(f"Saved: {output_dir / 'msb_out_vs_lsb_out.png'}")
+        plt.close()
+    else:
+        print("Note: No msb_out data found, skipping MSB Out vs LSB Out plot")
+    
+    # 5. MSB Out vs Epsilon plot
+    # Filter results that have both msb_out and epsilon data
+    results_with_msb_epsilon = [r for r in results if r["msb_out"] is not None and r["epsilon"] is not None]
+    if results_with_msb_epsilon:
+        fig, ax = plt.subplots(figsize=(10, 6))
+        
+        msb_outs_plot = [r["msb_out"] for r in results_with_msb_epsilon]
+        epsilons_plot = [r["epsilon"] for r in results_with_msb_epsilon]
+        errors_plot = [r["avg_error"] for r in results_with_msb_epsilon]
+        
+        # MSB Out vs Epsilon, colored by error
+        scatter = ax.scatter(epsilons_plot, msb_outs_plot, s=200, alpha=0.7, 
+                            c=errors_plot, cmap="viridis", edgecolors="black", linewidth=1.5)
+        ax.set_xlabel("Epsilon")
+        ax.set_ylabel("MSB Out")
+        ax.set_title("MSB Out vs Epsilon (colored by Average Error)")
+        ax.grid(True, alpha=0.3)
+        cbar = plt.colorbar(scatter, ax=ax)
+        cbar.set_label("Average Error")
+        
+        # Add annotations with configuration info
+        for i, r in enumerate(results_with_msb_epsilon):
+            ax.annotate(f"({r['lsb_in']},{r['lsb_out']})", 
+                       (epsilons_plot[i], msb_outs_plot[i]), 
+                       fontsize=7, alpha=0.6, ha="center")
+        
+        # Use log scale for x-axis if epsilon values span orders of magnitude
+        if max(epsilons_plot) / min(epsilons_plot) > 100:
+            ax.set_xscale('log')
+        
+        plt.tight_layout()
+        plt.savefig(output_dir / "msb_out_vs_epsilon.png", dpi=300, bbox_inches="tight")
+        print(f"Saved: {output_dir / 'msb_out_vs_epsilon.png'}")
+        plt.close()
+    else:
+        print("Note: No msb_out and epsilon data found, skipping MSB Out vs Epsilon plot")
+    
+    # 6. Epsilon vs Error plot
+    # Filter results that have epsilon data
+    results_with_epsilon = [r for r in results if r["epsilon"] is not None]
+    if results_with_epsilon:
+        fig, ax = plt.subplots(figsize=(10, 6))
+        
+        epsilons_plot = [r["epsilon"] for r in results_with_epsilon]
+        errors_plot = [r["avg_error"] for r in results_with_epsilon]
+        lsb_ins_plot = [r["lsb_in"] for r in results_with_epsilon]
+        lsb_outs_plot = [r["lsb_out"] for r in results_with_epsilon]
+        
+        # Epsilon vs Error, colored by lsb_in and lsb_out combination
+        # Create a unique identifier for each lsb_in/lsb_out combination for coloring
+        unique_configs = {}
+        config_id = 0
+        config_ids = []
+        for li, lo in zip(lsb_ins_plot, lsb_outs_plot):
+            config_key = (li, lo)
+            if config_key not in unique_configs:
+                unique_configs[config_key] = config_id
+                config_id += 1
+            config_ids.append(unique_configs[config_key])
+        
+        scatter = ax.scatter(epsilons_plot, errors_plot, s=200, alpha=0.7, 
+                            c=config_ids, cmap="tab20", edgecolors="black", linewidth=1.5)
+        ax.set_xlabel("Epsilon")
+        ax.set_ylabel("Average Error")
+        ax.set_title("Average Error vs Epsilon")
+        ax.grid(True, alpha=0.3)
+        
+        # Add legend for configurations
+        if len(unique_configs) <= 20:  # Only show legend if reasonable number of configs
+            handles = []
+            labels = []
+            for (li, lo), cid in sorted(unique_configs.items(), key=lambda x: x[1]):
+                color = plt.cm.tab20(cid / max(1, len(unique_configs) - 1))
+                handles.append(plt.Line2D([0], [0], marker='o', color='w', 
+                                         markerfacecolor=color, markersize=10, 
+                                         markeredgecolor='black', markeredgewidth=1.5))
+                labels.append(f"lsb_in={li}, lsb_out={lo}")
+            ax.legend(handles, labels, loc='best', fontsize=8, ncol=2)
+        
+        # Add annotations with epsilon values
+        for i, r in enumerate(results_with_epsilon):
+            ax.annotate(f"ε={r['epsilon']:.2e}", 
+                       (epsilons_plot[i], errors_plot[i]), 
+                       fontsize=7, alpha=0.6, ha="left", va="bottom")
+        
+        # Use log scale for x-axis if epsilon values span orders of magnitude
+        if max(epsilons_plot) / min(epsilons_plot) > 100:
+            ax.set_xscale('log')
+        
+        plt.tight_layout()
+        plt.savefig(output_dir / "epsilon_vs_error.png", dpi=300, bbox_inches="tight")
+        print(f"Saved: {output_dir / 'epsilon_vs_error.png'}")
+        plt.close()
+    else:
+        print("Note: No epsilon data found, skipping Epsilon vs Error plot")
+    
     print(f"\nAll plots saved to: {output_dir}")
 
 
@@ -177,6 +326,12 @@ def main() -> None:
         default=Path("plots"),
         help="Output directory for plots (default: plots/)",
     )
+    parser.add_argument(
+        "--epsilon",
+        type=float,
+        default=None,
+        help="Filter results to a specific epsilon value (optional). If not provided, plots all epsilon vs error data.",
+    )
     args = parser.parse_args()
     
     if not args.csv.exists():
@@ -187,8 +342,11 @@ def main() -> None:
     results = load_results(args.csv)
     print(f"Loaded {len(results)} result(s)")
     
+    if args.epsilon is not None:
+        print(f"\nFiltering results for epsilon={args.epsilon}")
+    
     print(f"\nCreating plots in: {args.output}")
-    create_plots(results, args.output)
+    create_plots(results, args.output, filter_epsilon=args.epsilon)
     print("\nDone!")
 
 

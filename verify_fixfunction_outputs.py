@@ -12,7 +12,7 @@ import argparse
 import math
 from pathlib import Path
 
-LSB_IN = -9
+LSB_IN = -3
 LSB_OUT = -3
 INPUT_SCALE = 2 ** abs(LSB_IN)
 OUTPUT_SCALE = 2 ** abs(LSB_OUT)

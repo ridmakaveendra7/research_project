@@ -174,34 +174,36 @@ def log_results_to_csv(
     function: str,
     epsilon: float | None,
     lsb_in: int,
+    msb_out: int,
     lsb_out: int,
     lut_count: int,
     ff_count: int,
     dsp_count: int,
     bram_count: float,
     avg_error: float,
-    io_pairs: list[tuple[int, int]],
+    errors: list[dict],
 ) -> None:
     """Append results to results.csv file."""
-    # Format inputs/outputs as a string (e.g., "0:1,1:2,2:3")
-    io_str = ",".join(f"{inp}:{out}" for inp, out in io_pairs)
+    # Format errors as a comma-separated string of absolute error values
+    errors_str = ",".join(f"{abs(e['abs_error']):.12f}" for e in errors)
     
-    # Prepare row data
+    # Prepare row data with column order
     row = {
         "function": function,
         "epsilon": epsilon if epsilon is not None else "",
         "lsb_in": lsb_in,
+        "msb_out": msb_out,
         "lsb_out": lsb_out,
         "LUTs": lut_count,
         "FFs": ff_count,
         "DSPs": dsp_count,
         "BRAMs": bram_count,
         "avg_error": avg_error,
-        "inputs_outputs": io_str,
+        "errors": errors_str,
     }
     
-    # Check if file exists to determine if we need to write header
-    file_exists = RESULTS_CSV.exists()
+    # Check if file exists and has content to determine if we need to write header
+    file_exists = RESULTS_CSV.exists() and RESULTS_CSV.stat().st_size > 0
     
     # Write to CSV
     with RESULTS_CSV.open("a", newline="", encoding="utf-8") as f:
@@ -393,22 +395,6 @@ def main() -> None:
     ]
     run_cmd(compute_errors_cmd)
     
-    # Read all input/output pairs from simulation CSV
-    io_pairs = []
-    with sim_csv_path.open("r", encoding="utf-8") as f:
-        for line in f:
-            stripped = line.strip()
-            if not stripped:
-                continue
-            parts = stripped.split()
-            if len(parts) >= 2:
-                try:
-                    inp = int(parts[0])
-                    out = int(parts[1])
-                    io_pairs.append((inp, out))
-                except ValueError:
-                    continue
-    
     # Extract epsilon from function
     epsilon = extract_epsilon(args.function)
     
@@ -417,13 +403,14 @@ def main() -> None:
         function=args.function,
         epsilon=epsilon,
         lsb_in=lsb_in,
+        msb_out=msb_out,
         lsb_out=lsb_out,
         lut_count=top_entry.LUTs or 0,
         ff_count=top_entry.FFs or 0,
         dsp_count=top_entry.DSPs or 0,
         bram_count=top_entry.BRAMs or 0.0,
         avg_error=avg_error,
-        io_pairs=io_pairs,
+        errors=error_results,
     )
 
 

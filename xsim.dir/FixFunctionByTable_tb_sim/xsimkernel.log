@@ -1,7 +1,7 @@
-Running: xsim.dir/FixFunctionByTable_tb_sim/xsimk.exe -runall -simmode gui -wdb FixFunctionByTable_tb_sim.wdb -simrunnum 0 -socket 6503
+Running: xsim.dir/FixFunctionByTable_tb_sim/xsimk.exe -runall -simmode gui -wdb FixFunctionByTable_tb_sim.wdb -simrunnum 0 -socket 9406
 Design successfully loaded
-Design Loading Memory Usage: 9716 KB (Peak: 9716 KB)
-Design Loading CPU Usage: 15 ms
+Design Loading Memory Usage: 9656 KB (Peak: 9656 KB)
+Design Loading CPU Usage: 31 ms
 Simulation completed
-Simulation Memory Usage: 10132 KB (Peak: 10132 KB)
-Simulation CPU Usage: 15 ms
+Simulation Memory Usage: 10096 KB (Peak: 10096 KB)
+Simulation CPU Usage: 31 ms
